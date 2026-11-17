@@ -7,6 +7,7 @@ use windows::core::Interface;
 use windows::Win32::Foundation::RECT;
 use windows::Win32::Graphics::Direct3D11::*;
 use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_NV12, DXGI_RATIONAL, DXGI_SAMPLE_DESC};
+use std::{cell::RefCell, collections::HashMap};
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
@@ -27,6 +28,9 @@ pub struct GpuConverter {
     output_view: ID3D11VideoProcessorOutputView,
     output: ID3D11Texture2D,
     staging: ID3D11Texture2D,
+    /// Uma view de entrada por textura da captura (o Windows reaproveita um
+    /// punhado delas): criar uma a cada frame custa uma chamada COM por frame.
+    input_views: RefCell<HashMap<usize, ID3D11VideoProcessorInputView>>,
 }
 
 impl GpuConverter {
@@ -110,7 +114,18 @@ impl GpuConverter {
             video_context.VideoProcessorSetStreamDestRect(&processor, 0, true, Some(&full(dst.0, dst.1)));
             video_context.VideoProcessorSetOutputTargetRect(&processor, true, Some(&full(dst.0, dst.1)));
 
-            Ok(Self { src, dst, video_device, video_context, enumerator, processor, output_view, output, staging })
+            Ok(Self {
+                src,
+                dst,
+                video_device,
+                video_context,
+                enumerator,
+                processor,
+                output_view,
+                output,
+                staging,
+                input_views: RefCell::new(HashMap::new()),
+            })
         }
     }
 
@@ -136,16 +151,33 @@ impl GpuConverter {
                 },
             };
             let mut input_view = None;
-            self.video_device.CreateVideoProcessorInputView(
-                texture,
-                &self.enumerator,
-                &in_desc,
-                Some(&mut input_view),
-            )?;
+            let key = texture.as_raw() as usize;
+            let input_view = {
+                let mut cache = self.input_views.borrow_mut();
+                match cache.get(&key) {
+                    Some(view) => view.clone(),
+                    None => {
+                        // a captura troca de textura ao mudar de tamanho: não
+                        // guarda view de textura que não volta mais
+                        if cache.len() >= 8 {
+                            cache.clear();
+                        }
+                        self.video_device.CreateVideoProcessorInputView(
+                            texture,
+                            &self.enumerator,
+                            &in_desc,
+                            Some(&mut input_view),
+                        )?;
+                        let view = input_view.ok_or("no input view")?;
+                        cache.insert(key, view.clone());
+                        view
+                    }
+                }
+            };
 
             let stream = D3D11_VIDEO_PROCESSOR_STREAM {
                 Enable: true.into(),
-                pInputSurface: std::mem::ManuallyDrop::new(input_view),
+                pInputSurface: std::mem::ManuallyDrop::new(Some(input_view)),
                 ..Default::default()
             };
             let mut streams = [stream];

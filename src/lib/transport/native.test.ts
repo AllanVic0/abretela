@@ -8,10 +8,12 @@ import { FakePC, installFakeRtc, settle, stream } from "../testing/fakeRtc";
 
 const calls: { cmd: string; args: Record<string, unknown> }[] = [];
 let emit: ((payload: unknown) => void) | null = null;
+const state = vi.hoisted(() => ({ failOpen: false }));
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: async (cmd: string, args: Record<string, unknown>) => {
     calls.push({ cmd, args });
+    if (state.failOpen && cmd === "native_viewer_open") throw new Error("no encoder");
   },
 }));
 vi.mock("@tauri-apps/api/event", () => ({
@@ -42,6 +44,7 @@ function setup() {
 beforeEach(() => {
   installFakeRtc();
   calls.length = 0;
+  state.failOpen = false;
 });
 
 afterEach(() => {
@@ -97,6 +100,23 @@ describe("NativeTransport", () => {
     t.unpublish();
     calls.length = 0;
     t.handleSignal("bia", { kind: "watch" });
+    expect(calls).toEqual([]);
+  });
+
+  it("cai para o envio pelo WebView quando o Rust não abre a conexão", async () => {
+    state.failOpen = true;
+    const { t, sent } = setup();
+    await settle();
+    t.handleSignal("bia", { kind: "watch" });
+    await settle();
+    // a malha assumiu: mandou a oferta do WebView para esta pessoa
+    expect(sent.map((m) => m.data.kind)).toEqual(["offer"]);
+    expect(FakePC.all).toHaveLength(1);
+    // o tamanho e a saída seguem pela malha, sem falar com o Rust
+    calls.length = 0;
+    t.handleSignal("bia", { kind: "view", height: 720 });
+    t.handleSignal("bia", { kind: "unwatch" });
+    await settle();
     expect(calls).toEqual([]);
   });
 

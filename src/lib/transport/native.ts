@@ -25,12 +25,16 @@ export class NativeTransport implements MediaTransport {
   private sharing = false;
   /** Quem está com uma conexão nativa aberta (e quando ela terminou de abrir). */
   private viewers = new Map<string, Promise<unknown>>();
+  /** A transmissão atual, para o WebView assumir quem o nativo não abrir. */
+  private pub: Publication | null = null;
+  /** Quem caiu para o envio pelo WebView (o nativo não abriu a conexão). */
+  private fellBack = new Set<string>();
   private unlisten: Promise<UnlistenFn>;
 
   constructor(private host: TransportHost) {
     this.mesh = new MeshTransport(host);
     this.unlisten = listen<NativeEvent>("native-send", (e) => this.onNative(e.payload));
-    log.info("sharing", "Using native sending (experimental): my screen is encoded and sent by the app itself");
+    log.info("sharing", "Using native sending: my screen is encoded and sent by the app itself");
   }
 
   private call(cmd: string, args: Record<string, unknown>, what: string): Promise<unknown> {
@@ -39,18 +43,25 @@ export class NativeTransport implements MediaTransport {
 
   // ---------- transmitir (no Rust) ----------
 
-  publish(_pub: Publication) {
+  publish(pub: Publication) {
     this.sharing = true;
+    this.pub = pub;
   }
 
-  replace(_pub: Publication): boolean {
+  replace(pub: Publication): boolean {
     // a captura nova alimenta o mesmo envio no Rust: ninguém desconecta
+    this.pub = pub;
     return true;
   }
 
   unpublish() {
     this.sharing = false;
+    this.pub = null;
     this.viewers.clear();
+    if (this.fellBack.size) {
+      this.mesh.unpublish();
+      this.fellBack.clear();
+    }
     this.call("native_send_stop", {}, "Stopping native sending");
   }
 
@@ -60,16 +71,35 @@ export class NativeTransport implements MediaTransport {
       return;
     }
     log.info("sharing", `${this.host.nameOf(id)} wants to watch (native sending)`);
-    const opened = this.call(
-      "native_viewer_open",
-      { viewer: id, name: this.host.nameOf(id) },
-      `Opening the connection to ${this.host.nameOf(id)}`,
-    );
+    const opened = invoke("native_viewer_open", { viewer: id, name: this.host.nameOf(id) })
+      .then(() => true)
+      .catch((e) => {
+        log.error("sharing", `Opening the connection to ${this.host.nameOf(id)} failed: ${describeError(e)}`);
+        return false;
+      });
     this.viewers.set(id, opened);
+    opened.then((ok) => {
+      if (!ok) this.fallbackToMesh(id);
+    });
+  }
+
+  /** O nativo não abriu: esta pessoa passa a ser servida pelo WebView, sem ela perceber. */
+  private fallbackToMesh(id: string) {
+    this.viewers.delete(id);
+    const pub = this.pub;
+    if (!pub) return;
+    log.warn("sharing", `Falling back to the WebView encoder for ${this.host.nameOf(id)}`);
+    this.fellBack.add(id);
+    this.mesh.publish(pub);
+    this.mesh.handleSignal(id, { kind: "watch" });
   }
 
   /** O tamanho em que a pessoa está vendo: o Rust escolhe a camada (só depois de abrir a conexão). */
   private view(id: string, height: number) {
+    if (this.fellBack.has(id)) {
+      this.mesh.requestView(id, height);
+      return;
+    }
     const opened = this.viewers.get(id);
     if (!opened) return;
     opened.then(() =>
@@ -78,6 +108,10 @@ export class NativeTransport implements MediaTransport {
   }
 
   private closeViewer(id: string) {
+    if (this.fellBack.delete(id)) {
+      this.mesh.handleSignal(id, { kind: "unwatch" });
+      return;
+    }
     if (!this.viewers.delete(id)) return;
     this.call("native_viewer_close", { viewer: id }, `Closing the connection to ${this.host.nameOf(id)}`);
   }
@@ -135,6 +169,10 @@ export class NativeTransport implements MediaTransport {
         this.view(from, Math.max(0, Number(data.height) || 0));
         return;
       case "answer":
+        if (this.fellBack.has(from)) {
+          this.mesh.handleSignal(from, data);
+          return;
+        }
         if (!this.viewers.has(from)) {
           log.warn("sharing", `Got an answer from ${this.host.nameOf(from)}, but no native connection was waiting for it`);
           return;
@@ -144,6 +182,10 @@ export class NativeTransport implements MediaTransport {
         return;
       case "ice":
         if (data.role === "viewer") {
+          if (this.fellBack.has(from)) {
+            this.mesh.handleSignal(from, data);
+            return;
+          }
           if (this.viewers.has(from) && data.candidate.candidate) {
             this.call(
               "native_viewer_candidate",

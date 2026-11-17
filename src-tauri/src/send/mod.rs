@@ -158,7 +158,10 @@ pub fn start(fps: u32, max_bitrate: u32, has_audio: bool, gpu: bool) -> Arc<dyn 
     let worker = sender.clone();
     thread::Builder::new()
         .name("native-encoder".into())
-        .spawn(move || worker.encode_loop())
+        .spawn(move || {
+            crate::capture::lower_thread_priority();
+            worker.encode_loop()
+        })
         .expect("encoder thread");
     log_info!("sharing", "Native sending started at {fps} fps, up to {} kbps, {audio_text}", max_bitrate / 1000);
     *slot = Some(sender.clone());

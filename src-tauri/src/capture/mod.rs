@@ -24,6 +24,9 @@ use std::{
 
 /// Peças específicas do sistema (prioridade de thread etc.).
 use win as platform;
+/// Para as outras threads do app (codificação, envio) não disputarem o
+/// processador com o jogo.
+pub use win::lower_thread_priority;
 
 static VIDEO: win::WgcSource = win::WgcSource;
 static AUDIO: win::WasapiLoopback = win::WasapiLoopback;

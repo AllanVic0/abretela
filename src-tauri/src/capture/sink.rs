@@ -61,7 +61,13 @@ impl WebSocketSink {
         let sink = Arc::new(Self { latest: Mutex::new(None), fresh: AtomicBool::new(false), audio: audio_tx });
         {
             let sink = sink.clone();
-            thread::spawn(move || sink.pace(fps, stop, video_tx));
+            thread::Builder::new()
+                .name("capture-pace".into())
+                .spawn(move || {
+                    super::lower_thread_priority();
+                    sink.pace(fps, stop, video_tx);
+                })
+                .map_err(|e| format!("falha ao iniciar o envio dos frames: {e}"))?;
         }
         *WAITING.lock().unwrap() = Some((token.to_string(), (video_rx, audio_rx)));
         Ok((sink, format!("ws://127.0.0.1:{port}/frames/{token}")))

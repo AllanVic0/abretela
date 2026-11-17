@@ -59,7 +59,7 @@ function load(): Prefs {
     closeToTray: saved.closeToTray ?? true,
     sounds: saved.sounds ?? true,
     hwAccel: saved.hwAccel ?? true,
-    nativeSend: saved.nativeSend ?? false,
+    nativeSend: saved.nativeSend ?? true,
   };
 }
 

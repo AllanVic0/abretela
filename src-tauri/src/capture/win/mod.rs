@@ -115,7 +115,7 @@ where
                 border,
                 SecondaryWindowSettings::Default,
                 interval,
-                DirtyRegionSettings::Default,
+                DirtyRegionSettings::ReportAndRender,
                 ColorFormat::Bgra8,
                 flags,
             ))
@@ -325,6 +325,12 @@ struct Streamer {
     busy: Duration,
     busy_frames: u32,
     next_report: Instant,
+    /// Ritmo mínimo entre frames convertidos. O Windows já limita pelo
+    /// `MinimumUpdateIntervalSettings`, mas em versões que não têm esse
+    /// recurso a captura entrega todo frame que a tela mudar: aqui o excesso
+    /// é descartado antes de custar processador.
+    min_interval: Duration,
+    last_kept: Option<Instant>,
 }
 
 impl GraphicsCaptureApiHandler for Streamer {
@@ -334,6 +340,8 @@ impl GraphicsCaptureApiHandler for Streamer {
     fn new(ctx: Context<Self::Flags>) -> Result<Self, Self::Error> {
         Ok(Self {
             gpu: ctx.flags.config.gpu.then(GpuNv12::default),
+            min_interval: Duration::from_micros(1_000_000 / ctx.flags.config.fps.max(1) as u64),
+            last_kept: None,
             flags: ctx.flags,
             cpu: CpuI420::default(),
             frames: 0,
@@ -349,9 +357,25 @@ impl GraphicsCaptureApiHandler for Streamer {
             control.stop();
             return Ok(());
         }
+        // o app parou de ler os frames: não adianta continuar convertendo
+        if self.flags.sink.is_closed() {
+            log_info!("capture", "The app stopped reading the frames, stopping the capture");
+            self.flags.stop.store(true, Ordering::Relaxed);
+            control.stop();
+            return Ok(());
+        }
         if self.frames == 1 {
             lower_thread_priority();
         }
+        // frame mais rápido que o ritmo pedido: descarta antes de converter
+        // (a folga de 1/8 evita perder frame por oscilação do relógio)
+        if self
+            .last_kept
+            .is_some_and(|last| last.elapsed() + self.min_interval / 8 < self.min_interval)
+        {
+            return Ok(());
+        }
+        self.last_kept = Some(Instant::now());
         let max_h = self.flags.config.max_height;
         let max_w = max_h * 21 / 9; // limita ultrawide
         let src = (frame.width(), frame.height());

@@ -178,7 +178,8 @@ Partes, cada uma saindo e testada antes da próxima:
     (a estimativa de um deles caiu), mesmo em rede local.
 - [x] **3e. Opção experimental** (falta só o teste em sala real, abaixo).
   - Chave "Envio nativo (experimental)" em Configurações → Desempenho, nos seis
-    idiomas, desligada por padrão. Vale a partir da próxima sala: o modo fica
+    idiomas, ligada por padrão (dá para desligar em Configurações → Desempenho).
+    Vale a partir da próxima sala: o modo fica
     preso ao `RoomClient` (`client.nativeSend`), e a captura segue o modo da
     sala, não a opção (mudar no meio da sala descasaria transporte e captura, e
     ninguém veria nada).
@@ -197,6 +198,10 @@ Partes, cada uma saindo e testada antes da próxima:
     saúde de cada espectador (fps, perda), que os dois métodos já tinham.
   - Não tem: voltar sozinho para o envio pelo WebView se o nativo falhar (o
     codificador do processador já é a reserva dentro do nativo).
+  - Tem: se o Rust não conseguir abrir a conexão de um espectador
+    (`native_viewer_open` falha), só aquela pessoa passa a ser servida pelo
+    envio do WebView, sem ela perceber (`fallbackToMesh` em
+    `src/lib/transport/native.ts`).
   - **Roteiro do teste em sala** (2 PCs, redes diferentes de preferência):
     1. Sem a opção: entrar na sala, transmitir 1080p60 com som de um app
        (vídeo ou jogo), a outra pessoa assiste ~2 min. Repetir com 2 ou 3
