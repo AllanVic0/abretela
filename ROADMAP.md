@@ -177,7 +177,7 @@ Partes, cada uma saindo e testada antes da próxima:
   - Ver no teste real: a camada de 1080p com três abas ficou em ~3,3 Mbps
     (a estimativa de um deles caiu), mesmo em rede local.
 - [x] **3e. Opção experimental** (falta só o teste em sala real, abaixo).
-  - Chave "Envio nativo (experimental)" em Configurações → Desempenho, nos seis
+  - Chave "Envio nativo" em Configurações → Desempenho, nos seis
     idiomas, ligada por padrão (dá para desligar em Configurações → Desempenho).
     Vale a partir da próxima sala: o modo fica
     preso ao `RoomClient` (`client.nativeSend`), e a captura segue o modo da
@@ -196,9 +196,7 @@ Partes, cada uma saindo e testada antes da próxima:
     qual método está em uso. Medido: 1080p60 nativo = ~1,3% do processador e
     ~15% da parte de codificação da placa (RX 7800 XT). Junto com as linhas de
     saúde de cada espectador (fps, perda), que os dois métodos já tinham.
-  - Não tem: voltar sozinho para o envio pelo WebView se o nativo falhar (o
-    codificador do processador já é a reserva dentro do nativo).
-  - Tem: se o Rust não conseguir abrir a conexão de um espectador
+  - Se o Rust não conseguir abrir a conexão de um espectador
     (`native_viewer_open` falha), só aquela pessoa passa a ser servida pelo
     envio do WebView, sem ela perceber (`fallbackToMesh` em
     `src/lib/transport/native.ts`).
